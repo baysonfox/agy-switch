@@ -64,6 +64,7 @@
     "api_requests": "{{requestCount}} requests",
     "pricing_local_cache": "cached prices",
     "pricing_google": "Google API prices (Gemini and Claude)",
+    "pricing_models_dev": "models.dev model prices (with manual overrides)",
     "pricing_fallback": "Prices unavailable",
     "pricing_unavailable": "Prices unavailable",
     "unpriced_count": "{{count}} models unpriced",
@@ -574,5 +575,29 @@
     "reference_caps_desc": "When no consumption exists (100%), fallback to custom cap or historical calibrated median",
     "enable_ref_cap": "Enable Full Quota Fallback",
     "auto_calc": "Calibrated median"
+  },
+  "model_pricing_settings": {
+    "title": "Model Pricing & models.dev Sync",
+    "description": "Automatically sync model prices from models.dev or manually set input, output, and cache-read rates (USD / 1M tokens)",
+    "auto_sync_label": "models.dev Auto-Sync",
+    "auto_sync_desc": "Syncs public model prices every 24h when enabled; manual prices always take precedence",
+    "enable_auto_sync": "Auto-sync",
+    "sync_now": "Sync Now",
+    "sync_success": "Synced {{count}} model prices from models.dev",
+    "loaded_count": "{{count}} models loaded ({{source}})",
+    "manual_title": "Manual Model Prices",
+    "manual_desc": "Add or override input, output, and cache-read prices ($/1M tokens) for any model",
+    "col_model": "Model",
+    "col_input": "Input ($/1M)",
+    "col_output": "Output ($/1M)",
+    "col_cached": "Cache Read ($/1M)",
+    "col_actions": "Actions",
+    "model_placeholder": "e.g. gemini-2.5-flash or custom model",
+    "save_price": "Save",
+    "manual_saved": "Saved manual price for {{model}}",
+    "error_model_required": "Enter a model name",
+    "error_invalid_price": "Input, output, and cache-read prices must be non-negative numbers",
+    "click_to_edit": "Click to edit above",
+    "delete_price": "Delete manual price for {{model}}"
   }
 }

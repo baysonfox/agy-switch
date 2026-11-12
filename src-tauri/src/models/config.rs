@@ -23,6 +23,8 @@ pub struct AppConfig {
     pub network: NetworkPreferences,
     #[serde(default)]
     pub quota_valuation: QuotaValuationConfig,
+    #[serde(default)]
+    pub model_pricing: ModelPricingConfig,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -256,6 +258,44 @@ impl Default for QuotaValuationConfig {
     }
 }
 
+/// User-entered manual model price (USD per 1M tokens)
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ManualModelPrice {
+    pub model: String,
+    pub input: f64,
+    pub output: f64,
+    pub cached: f64,
+}
+
+impl Default for ManualModelPrice {
+    fn default() -> Self {
+        Self {
+            model: String::new(),
+            input: 0.0,
+            output: 0.0,
+            cached: 0.0,
+        }
+    }
+}
+
+/// Model API pricing sync and manual override configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ModelPricingConfig {
+    pub auto_sync_models_dev: bool,
+    pub manual_prices: Vec<ManualModelPrice>,
+}
+
+impl Default for ModelPricingConfig {
+    fn default() -> Self {
+        Self {
+            auto_sync_models_dev: true,
+            manual_prices: Vec::new(),
+        }
+    }
+}
+
 impl AppConfig {
     pub fn new() -> Self {
         Self {
@@ -277,6 +317,7 @@ impl AppConfig {
             pinned_quota_models: PinnedQuotaModelsConfig::default(),
             network: NetworkPreferences::default(),
             quota_valuation: QuotaValuationConfig::default(),
+            model_pricing: ModelPricingConfig::default(),
         }
     }
 }

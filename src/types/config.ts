@@ -77,6 +77,23 @@ export const DEFAULT_QUOTA_VALUATION_CONFIG: QuotaValuationConfig = {
     reference_caps_usd: {},
 };
 
+export interface ManualModelPrice {
+    model: string;
+    input: number;
+    output: number;
+    cached: number;
+}
+
+export interface ModelPricingConfig {
+    auto_sync_models_dev: boolean;
+    manual_prices: ManualModelPrice[];
+}
+
+export const DEFAULT_MODEL_PRICING_CONFIG: ModelPricingConfig = {
+    auto_sync_models_dev: true,
+    manual_prices: [],
+};
+
 export interface AppConfig {
     network?: { proxy_mode: 'system' | 'direct' | 'manual'; proxy_url: string };
     dashboard?: DashboardPreferences;
@@ -96,4 +113,5 @@ export interface AppConfig {
     quota_protection: QuotaProtectionConfig;
     pinned_quota_models: PinnedQuotaModelsConfig;
     quota_valuation?: QuotaValuationConfig;
+    model_pricing?: ModelPricingConfig;
 }

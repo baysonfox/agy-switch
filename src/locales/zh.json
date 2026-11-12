@@ -64,6 +64,7 @@
     "api_requests": "{{requestCount}} 次请求",
     "pricing_local_cache": "使用本地价格缓存",
     "pricing_google": "Google 官方 API 价格（Gemini 与 Claude）",
+    "pricing_models_dev": "models.dev 模型售价（含手动覆盖）",
     "pricing_fallback": "暂无价格",
     "pricing_unavailable": "暂无可用价格",
     "unpriced_count": "{{count}} 个模型未计价",
@@ -574,5 +575,29 @@
     "reference_caps_desc": "当账号未产生消耗（100%）时，依次取自定义上限或历史样本中位数折算等效价值",
     "enable_ref_cap": "启用满额折算",
     "auto_calc": "自动校准中位数"
+  },
+  "model_pricing_settings": {
+    "title": "模型售价与 models.dev 同步",
+    "description": "自动从 models.dev 同步模型售价，或手动配置输入、输出、缓存读单价（USD / 百万 tokens）",
+    "auto_sync_label": "models.dev 自动同步",
+    "auto_sync_desc": "开启后每 24 小时自动同步公开模型售价；手动设置的模型价格始终优先覆盖",
+    "enable_auto_sync": "自动同步",
+    "sync_now": "立即同步",
+    "sync_success": "已从 models.dev 同步 {{count}} 个模型售价",
+    "loaded_count": "已加载 {{count}} 个模型（{{source}}）",
+    "manual_title": "手动模型价格",
+    "manual_desc": "手动输入或覆盖指定模型的输入、输出与缓存读单价（$/1M tokens）",
+    "col_model": "模型名称",
+    "col_input": "输入 ($/1M)",
+    "col_output": "输出 ($/1M)",
+    "col_cached": "缓存读 ($/1M)",
+    "col_actions": "操作",
+    "model_placeholder": "如 gemini-2.5-flash 或自定义模型",
+    "save_price": "保存",
+    "manual_saved": "已保存 {{model}} 的手动价格",
+    "error_model_required": "请输入模型名称",
+    "error_invalid_price": "输入、输出、缓存读价格必须为非负数字",
+    "click_to_edit": "点击填充到上方进行编辑",
+    "delete_price": "删除 {{model}} 的手动价格"
   }
 }

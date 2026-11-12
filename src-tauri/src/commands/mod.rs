@@ -713,6 +713,11 @@ pub async fn get_api_pricing() -> Result<crate::modules::api_pricing::ApiPricing
     crate::modules::api_pricing::get_api_pricing().await
 }
 
+#[tauri::command]
+pub async fn sync_api_pricing() -> Result<crate::modules::api_pricing::ApiPricingSnapshot, String> {
+    crate::modules::api_pricing::get_api_pricing_with_force(true).await
+}
+
 /// 检查 GitHub Releases 获取最新版本信息
 #[tauri::command]
 pub async fn check_for_updates() -> Result<crate::modules::updater::UpdateInfo, String> {

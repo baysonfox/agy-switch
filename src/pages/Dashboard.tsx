@@ -524,7 +524,9 @@ function Dashboard() {
     const pricingLabel = pricing
         ? pricing.stale
             ? t('local_dashboard.pricing_local_cache')
-            : t('local_dashboard.pricing_google')
+            : pricing.source === 'models.dev'
+                ? t('local_dashboard.pricing_models_dev')
+                : pricing.source || t('local_dashboard.pricing_google')
         : t('local_dashboard.pricing_fallback');
 
     const performance = usage?.recent_performance;
