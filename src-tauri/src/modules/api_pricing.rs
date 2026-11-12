@@ -8,9 +8,10 @@ use std::path::PathBuf;
 const GEMINI_PRICING_URL: &str = "https://ai.google.dev/gemini-api/docs/pricing.md.txt";
 const AGENT_PLATFORM_PRICING_URL: &str =
     "https://platform.claude.com/docs/en/about-claude/pricing.md";
+const MODELS_DEV_API_URL: &str = "https://models.dev/api.json";
 const EXCHANGE_RATE_API_URL: &str = "https://open.er-api.com/v6/latest/USD";
 const CACHE_TTL_SECONDS: i64 = 24 * 60 * 60;
-const PARSER_REVISION: u32 = 4;
+const PARSER_REVISION: u32 = 5;
 const DEFAULT_USD_TO_CNY: f64 = 7.25;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -41,79 +42,250 @@ pub struct ApiPricingSnapshot {
     pub warning: Option<String>,
 }
 
-/// Fetch public Google pricing pages once per day. Only pricing metadata is cached locally;
-/// no account, prompt, or conversation data is sent.
+fn is_valid_price(price: &ApiPricing) -> bool {
+    !price.model.trim().is_empty()
+        && [price.input, price.output, price.cached]
+            .iter()
+            .all(|rate| rate.is_finite() && *rate >= 0.0)
+}
+
+pub fn merge_prices(base: Vec<ApiPricing>, overrides: &[ApiPricing]) -> Vec<ApiPricing> {
+    let mut unique: BTreeMap<String, ApiPricing> = BTreeMap::new();
+    for price in base.into_iter().filter(is_valid_price) {
+        let key = crate::modules::menu_bar_usage::pricing_keys(&price.model).0;
+        if !key.is_empty() {
+            unique.insert(key, price);
+        }
+    }
+    for price in overrides.iter().filter(|p| is_valid_price(p)) {
+        let key = crate::modules::menu_bar_usage::pricing_keys(&price.model).0;
+        if !key.is_empty() {
+            unique.insert(key, price.clone());
+        }
+    }
+    unique.into_values().collect()
+}
+
+fn apply_manual_prices(
+    mut snapshot: ApiPricingSnapshot,
+    manual_prices: &[crate::models::config::ManualModelPrice],
+) -> ApiPricingSnapshot {
+    if manual_prices.is_empty() {
+        return snapshot;
+    }
+    let overrides: Vec<ApiPricing> = manual_prices
+        .iter()
+        .map(|entry| ApiPricing {
+            model: entry.model.trim().to_string(),
+            input: entry.input,
+            output: entry.output,
+            cached: entry.cached,
+        })
+        .filter(is_valid_price)
+        .collect();
+    if !overrides.is_empty() {
+        snapshot.prices = merge_prices(snapshot.prices, &overrides);
+    }
+    snapshot
+}
+
+fn has_date_suffix(model_id: &str) -> bool {
+    let Some((_, suffix)) = model_id.rsplit_once('-') else {
+        return false;
+    };
+    suffix.len() == 8 && suffix.bytes().all(|b| b.is_ascii_digit())
+}
+
+/// Parse https://models.dev/api.json into deduplicated ApiPricing entries (USD per 1M tokens).
+pub fn parse_models_dev_prices(json_str: &str) -> Result<Vec<ApiPricing>, String> {
+    let root: serde_json::Value =
+        serde_json::from_str(json_str).map_err(|error| format!("JSON 解析失败: {}", error))?;
+    let providers = root
+        .as_object()
+        .ok_or_else(|| "models.dev 响应格式无效".to_string())?;
+
+    const PREFERRED_PROVIDERS: &[&str] = &[
+        "google",
+        "anthropic",
+        "openai",
+        "deepseek",
+        "xai",
+        "mistral",
+        "moonshotai",
+        "zhipuai",
+        "alibaba",
+        "qwen",
+        "groq",
+        "cohere",
+    ];
+
+    let mut ordered_providers: Vec<&str> = Vec::with_capacity(providers.len());
+    for &pid in PREFERRED_PROVIDERS {
+        if providers.contains_key(pid) {
+            ordered_providers.push(pid);
+        }
+    }
+    let mut remaining: Vec<&str> = providers
+        .keys()
+        .map(String::as_str)
+        .filter(|pid| !PREFERRED_PROVIDERS.contains(pid))
+        .collect();
+    remaining.sort_unstable();
+    ordered_providers.extend(remaining);
+
+    let mut seen_keys = std::collections::HashSet::new();
+    let mut prices = Vec::new();
+
+    for pid in ordered_providers {
+        let Some(models) = providers
+            .get(pid)
+            .and_then(|p| p.get("models"))
+            .and_then(|m| m.as_object())
+        else {
+            continue;
+        };
+
+        let mut model_ids: Vec<&str> = models.keys().map(String::as_str).collect();
+        model_ids.sort_unstable();
+
+        for mid in model_ids {
+            let Some(model_obj) = models.get(mid).and_then(|v| v.as_object()) else {
+                continue;
+            };
+            let Some(cost) = model_obj.get("cost").and_then(|v| v.as_object()) else {
+                continue;
+            };
+            let Some(input) = cost.get("input").and_then(|v| v.as_f64()) else {
+                continue;
+            };
+            let Some(output) = cost.get("output").and_then(|v| v.as_f64()) else {
+                continue;
+            };
+            let cached = match cost.get("cache_read") {
+                Some(v) => match v.as_f64() {
+                    Some(c) => c,
+                    None => continue,
+                },
+                None => 0.0,
+            };
+            if ![input, output, cached]
+                .iter()
+                .all(|rate| rate.is_finite() && *rate >= 0.0)
+            {
+                continue;
+            }
+
+            let display_name = model_obj
+                .get("name")
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty());
+            let chosen_name = if (pid == "anthropic" || has_date_suffix(mid)) && display_name.is_some() {
+                display_name.unwrap().to_string()
+            } else {
+                mid.to_string()
+            };
+
+            let key = crate::modules::menu_bar_usage::pricing_keys(&chosen_name).0;
+            if key.is_empty() || !seen_keys.insert(key) {
+                continue;
+            }
+
+            prices.push(ApiPricing {
+                model: chosen_name,
+                input,
+                output,
+                cached,
+            });
+        }
+    }
+
+    if prices.is_empty() {
+        return Err("models.dev 未返回任何有效模型价格".to_string());
+    }
+    Ok(prices)
+}
+
+/// Fetch public model pricing (models.dev when auto-sync is enabled) and apply manual overrides.
+/// Only pricing metadata is cached locally; no account, prompt, or conversation data is sent.
 pub async fn get_api_pricing() -> Result<ApiPricingSnapshot, String> {
+    get_api_pricing_with_force(false).await
+}
+
+pub async fn get_api_pricing_with_force(force: bool) -> Result<ApiPricingSnapshot, String> {
+    let config = crate::modules::config::load_app_config().unwrap_or_default();
+    let manual_prices = &config.model_pricing.manual_prices;
     let now = Utc::now().timestamp();
-    if let Some(mut cached) = read_cache() {
-        if cached.parser_revision == PARSER_REVISION && now.saturating_sub(cached.fetched_at) < CACHE_TTL_SECONDS && !cached.prices.is_empty() {
-            cached.stale = false;
-            cached.warning = None;
-            return Ok(cached);
+
+    if !config.model_pricing.auto_sync_models_dev {
+        let snapshot = ApiPricingSnapshot {
+            parser_revision: PARSER_REVISION,
+            prices: merge_prices(builtin_fallback_prices(), &[]),
+            fetched_at: now,
+            stale: false,
+            source: "手动配置与内置价格".to_string(),
+            warning: None,
+        };
+        return Ok(apply_manual_prices(snapshot, manual_prices));
+    }
+
+    if !force {
+        if let Some(mut cached) = read_cache() {
+            if cached.parser_revision == PARSER_REVISION
+                && now.saturating_sub(cached.fetched_at) < CACHE_TTL_SECONDS
+                && !cached.prices.is_empty()
+            {
+                cached.stale = false;
+                cached.warning = None;
+                return Ok(apply_manual_prices(cached, manual_prices));
+            }
         }
     }
 
     let client = crate::utils::proxy::configure_reqwest(reqwest::Client::builder())?
-        .timeout(std::time::Duration::from_secs(12))
+        .timeout(std::time::Duration::from_secs(20))
         .user_agent("agy-switch local usage dashboard")
         .build()
         .map_err(|error| error.to_string())?;
 
-    let (gemini_result, agent_platform_result) = tokio::join!(
-        fetch_page(&client, GEMINI_PRICING_URL),
-        fetch_page(&client, AGENT_PLATFORM_PRICING_URL),
-    );
-
-    let today = Utc::now().date_naive();
-    let mut prices = Vec::new();
-    let mut warnings = Vec::new();
-
-    match gemini_result {
-        Ok(html) => {
-            let parsed = parse_gemini_prices(&html, today);
-            // A fetched page that yields no model is a parser break, not a fresh source:
-            // say so instead of presenting built-in prices as official ones.
-            if parsed.is_empty() {
-                warnings.push("Gemini 价格页：未解析到任何模型价格".to_string());
-            }
-            prices.extend(parsed);
-        }
-        Err(error) => warnings.push(format!("Gemini 价格页：{}", error)),
-    }
-    match agent_platform_result {
-        Ok(html) => {
-            let parsed = parse_agent_platform_prices(&html, today);
-            if parsed.is_empty() {
-                warnings.push("Claude 价格页：未解析到任何模型价格".to_string());
-            }
-            prices.extend(parsed);
-        }
-        Err(error) => warnings.push(format!("Claude 价格页：{}", error)),
-    }
-
-    let mut unique_prices = BTreeMap::new();
-    for price in builtin_fallback_prices() {
-        unique_prices.insert(price.model.to_ascii_lowercase(), price);
-    }
-    for price in prices {
-        unique_prices.insert(price.model.to_ascii_lowercase(), price);
-    }
-    let combined_prices: Vec<ApiPricing> = unique_prices.into_values().collect();
-
-    let snapshot = ApiPricingSnapshot {
-        parser_revision: PARSER_REVISION,
-        prices: combined_prices,
-        fetched_at: now,
-        stale: !warnings.is_empty(),
-        source: if warnings.is_empty() {
-            "Google Gemini API + Google Agent Platform 官方价格".to_string()
-        } else {
-            "Google 官方价格与内置标准价格融合".to_string()
-        },
-        warning: (!warnings.is_empty()).then(|| warnings.join("；")),
+    let models_dev_result = match fetch_page(&client, MODELS_DEV_API_URL).await {
+        Ok(body) => parse_models_dev_prices(&body),
+        Err(error) => Err(error),
     };
-    write_cache(&snapshot);
-    Ok(snapshot)
+
+    match models_dev_result {
+        Ok(synced_prices) => {
+            let combined_prices = merge_prices(builtin_fallback_prices(), &synced_prices);
+            let snapshot = ApiPricingSnapshot {
+                parser_revision: PARSER_REVISION,
+                prices: combined_prices,
+                fetched_at: now,
+                stale: false,
+                source: "models.dev".to_string(),
+                warning: None,
+            };
+            write_cache(&snapshot);
+            Ok(apply_manual_prices(snapshot, manual_prices))
+        }
+        Err(error) => {
+            if let Some(mut cached) = read_cache() {
+                if !cached.prices.is_empty() {
+                    cached.stale = true;
+                    cached.warning = Some(format!("models.dev 同步失败（{}），使用本地缓存价格", error));
+                    return Ok(apply_manual_prices(cached, manual_prices));
+                }
+            }
+            let fallback = ApiPricingSnapshot {
+                parser_revision: PARSER_REVISION,
+                prices: merge_prices(builtin_fallback_prices(), &[]),
+                fetched_at: now,
+                stale: true,
+                source: "内置价格兜底".to_string(),
+                warning: Some(format!("models.dev 同步失败（{}），使用内置兜底价格", error)),
+            };
+            Ok(apply_manual_prices(fallback, manual_prices))
+        }
+    }
 }
 
 async fn fetch_page(client: &reqwest::Client, url: &str) -> Result<String, String> {
@@ -290,18 +462,35 @@ pub fn builtin_fallback_prices() -> Vec<ApiPricing> {
 }
 
 pub fn cached_pricing() -> Option<ApiPricingSnapshot> {
-    if let Some(mut snapshot) = read_cache() {
-        snapshot.stale = snapshot.parser_revision != PARSER_REVISION || Utc::now().timestamp().saturating_sub(snapshot.fetched_at) >= CACHE_TTL_SECONDS;
-        return Some(snapshot);
+    let config = crate::modules::config::load_app_config().unwrap_or_default();
+    let manual_prices = &config.model_pricing.manual_prices;
+
+    if !config.model_pricing.auto_sync_models_dev {
+        let snapshot = ApiPricingSnapshot {
+            parser_revision: PARSER_REVISION,
+            prices: merge_prices(builtin_fallback_prices(), &[]),
+            fetched_at: Utc::now().timestamp(),
+            stale: false,
+            source: "手动配置与内置价格".to_string(),
+            warning: None,
+        };
+        return Some(apply_manual_prices(snapshot, manual_prices));
     }
-    Some(ApiPricingSnapshot {
+
+    if let Some(mut snapshot) = read_cache() {
+        snapshot.stale = snapshot.parser_revision != PARSER_REVISION
+            || Utc::now().timestamp().saturating_sub(snapshot.fetched_at) >= CACHE_TTL_SECONDS;
+        return Some(apply_manual_prices(snapshot, manual_prices));
+    }
+    let fallback = ApiPricingSnapshot {
         parser_revision: PARSER_REVISION,
-        prices: builtin_fallback_prices(),
+        prices: merge_prices(builtin_fallback_prices(), &[]),
         fetched_at: Utc::now().timestamp(),
         stale: true,
         source: "内置价格兜底".to_string(),
         warning: None,
-    })
+    };
+    Some(apply_manual_prices(fallback, manual_prices))
 }
 
 fn read_cache() -> Option<ApiPricingSnapshot> {
@@ -873,5 +1062,64 @@ mod tests {
         assert_eq!((sonnet.input, sonnet.output, sonnet.cached), (3.0, 15.0, 0.30));
         let haiku = prices.iter().find(|p| p.model == "Claude Haiku 5.5").unwrap();
         assert_eq!((haiku.input, haiku.output, haiku.cached), (0.10, 0.50, 0.01));
+    }
+
+    #[test]
+    fn parses_models_dev_json_with_provider_priority_and_cache_read() {
+        let json = r#"{
+            "openrouter": {
+                "models": {
+                    "gemini-2.5-flash": { "name": "Gemini 2.5 Flash", "cost": { "input": 99.0, "output": 99.0, "cache_read": 9.0 } }
+                }
+            },
+            "google": {
+                "models": {
+                    "gemini-2.5-flash": { "name": "Gemini 2.5 Flash", "cost": { "input": 0.3, "output": 2.5, "cache_read": 0.03 } },
+                    "gemini-3.1-flash-image": { "name": "Nano Banana 2", "cost": { "input": 0.5, "output": 60.0 } }
+                }
+            },
+            "anthropic": {
+                "models": {
+                    "claude-sonnet-4-5-20250929": { "name": "Claude Sonnet 4.5", "cost": { "input": 3.0, "output": 15.0, "cache_read": 0.3 } }
+                }
+            }
+        }"#;
+        let prices = parse_models_dev_prices(json).unwrap();
+        assert_eq!(prices.len(), 3);
+
+        let flash = prices.iter().find(|p| p.model == "gemini-2.5-flash").unwrap();
+        assert_eq!((flash.input, flash.output, flash.cached), (0.3, 2.5, 0.03));
+
+        let image = prices.iter().find(|p| p.model == "gemini-3.1-flash-image").unwrap();
+        assert_eq!((image.input, image.output, image.cached), (0.5, 60.0, 0.0));
+
+        let sonnet = prices.iter().find(|p| p.model == "Claude Sonnet 4.5").unwrap();
+        assert_eq!((sonnet.input, sonnet.output, sonnet.cached), (3.0, 15.0, 0.3));
+    }
+
+    #[test]
+    fn manual_prices_override_synced_and_add_custom_models() {
+        let base = ApiPricingSnapshot {
+            parser_revision: PARSER_REVISION,
+            prices: vec![
+                ApiPricing { model: "gemini-2.5-flash".into(), input: 0.3, output: 2.5, cached: 0.03 },
+            ],
+            fetched_at: 100,
+            stale: false,
+            source: "models.dev".into(),
+            warning: None,
+        };
+        let manual = vec![
+            crate::models::config::ManualModelPrice { model: "Gemini 2.5 Flash".into(), input: 1.0, output: 2.0, cached: 0.1 },
+            crate::models::config::ManualModelPrice { model: "custom-model-v1".into(), input: 4.5, output: 18.0, cached: 0.45 },
+        ];
+        let merged = apply_manual_prices(base, &manual);
+        assert_eq!(merged.prices.len(), 2);
+
+        let matched_flash = crate::modules::menu_bar_usage::match_model_price("gemini-2.5-flash", &merged.prices).unwrap();
+        assert_eq!((matched_flash.input, matched_flash.output, matched_flash.cached), (1.0, 2.0, 0.1));
+
+        let matched_custom = crate::modules::menu_bar_usage::match_model_price("custom-model-v1", &merged.prices).unwrap();
+        assert_eq!((matched_custom.input, matched_custom.output, matched_custom.cached), (4.5, 18.0, 0.45));
     }
 }

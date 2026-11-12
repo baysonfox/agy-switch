@@ -89,6 +89,12 @@ export function setupSettingsFixture(options: { theme?: string; language?: strin
             if (command === 'set_menu_bar_preferences') { general.menu_bar = { ...general.menu_bar, ...args.patch, ...(args.quotaScope ? { quota_scope: args.quotaScope } : {}) }; return copy(general.menu_bar); }
             if (command === 'set_window_theme' || command === 'set_window_language') return null;
             if (command === 'main_window_ready') return null;
+            if (command === 'get_api_pricing' || command === 'sync_api_pricing') {
+                const manual = general.model_pricing?.manual_prices || [];
+                const base = [{ model: 'gemini-2.5-flash', input: 0.3, output: 2.5, cached: 0.03 }];
+                const merged = [...base.filter((b: any) => !manual.some((m: any) => m.model.toLowerCase() === b.model.toLowerCase())), ...manual];
+                return { prices: merged, fetched_at: 1800000000, stale: false, source: command === 'sync_api_pricing' || general.model_pricing?.auto_sync_models_dev !== false ? 'models.dev' : '手动配置与内置价格', warning: null };
+            }
             if (command === 'plugin:event|listen') { (listeners[args.event] ||= []).push(args.handler); return callback++; }
             if (command.startsWith('plugin:window|')) {
                 if (/size$/.test(command)) return { width: 1100, height: 780 };

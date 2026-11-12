@@ -10,6 +10,7 @@ import UpdateSettings from '../components/settings/UpdateSettings';
 import DesktopSettings from '../components/settings/DesktopSettings';
 import DashboardSettings from '../components/settings/DashboardSettings';
 import ModelDisplaySettings from '../components/settings/ModelDisplaySettings';
+import ModelPricingSettings from '../components/settings/ModelPricingSettings';
 import ExperimentalSettings from '../components/settings/ExperimentalSettings';
 import NetworkSettings from '../components/settings/NetworkSettings';
 import { AutoSwitchSettings } from '../components/autoSwitch/AutoSwitch';
@@ -291,6 +292,9 @@ function Settings() {
             <div className="space-y-6">
                 {/* 1. 卡片与列表展示模型 */}
                 <ModelDisplaySettings embedded />
+
+                {/* 2. 模型售价同步与手动配置 */}
+                <ModelPricingSettings />
 
                 {/* 2. 定时后台刷新与多端同步 */}
                 <section className="rounded-2xl border border-gray-200/80 bg-white shadow-xs dark:border-slate-800 dark:bg-slate-900/80 divide-y divide-gray-100 dark:divide-slate-800">
