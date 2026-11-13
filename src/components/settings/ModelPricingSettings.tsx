@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Coins, Plus, RefreshCw, Trash2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useConfigStore } from '../../stores/useConfigStore';
@@ -24,7 +24,9 @@ interface ApiPricingSnapshot {
 export default function ModelPricingSettings() {
     const { t } = useTranslation();
     const { config, saveConfig } = useConfigStore();
-    const pricingConfig = config?.model_pricing ?? DEFAULT_MODEL_PRICING_CONFIG;
+    const [pendingPricing, setPendingPricing] = useState<ModelPricingConfig | null>(null);
+    const saveCounterRef = useRef(0);
+    const pricingConfig = pendingPricing ?? config?.model_pricing ?? DEFAULT_MODEL_PRICING_CONFIG;
 
     const [snapshot, setSnapshot] = useState<ApiPricingSnapshot | null>(null);
     const [syncing, setSyncing] = useState(false);
@@ -49,17 +51,24 @@ export default function ModelPricingSettings() {
     }, [loadPricing]);
 
     const updatePricingConfig = async (patch: Partial<ModelPricingConfig>) => {
-        if (!config) return;
+        const latestConfig = useConfigStore.getState().config ?? config;
+        if (!latestConfig) return;
         const nextConfig: ModelPricingConfig = {
             ...DEFAULT_MODEL_PRICING_CONFIG,
-            ...config.model_pricing,
+            ...(pendingPricing ?? latestConfig.model_pricing),
             ...patch,
         };
+        const saveId = ++saveCounterRef.current;
+        setPendingPricing(nextConfig);
         try {
-            await saveConfig({ ...config, model_pricing: nextConfig }, true);
+            await saveConfig({ ...latestConfig, model_pricing: nextConfig }, true);
             await loadPricing();
         } catch (err) {
             showToast(String(err), 'error');
+        } finally {
+            if (saveCounterRef.current === saveId) {
+                setPendingPricing(null);
+            }
         }
     };
 

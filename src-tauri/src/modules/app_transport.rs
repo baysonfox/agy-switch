@@ -396,25 +396,34 @@ impl CdpTransport {
             .map_err(|_| TransportError::Closed)?;
         let deadline = Instant::now() + TIMEOUT;
         for _ in 0..MAX_EVENTS {
-            let left = deadline
-                .checked_duration_since(Instant::now())
-                .ok_or(TransportError::Timeout)?;
-            self.socket
-                .get_mut()
-                .set_read_timeout(Some(left))
-                .map_err(|_| TransportError::Closed)?;
-            let message = self.socket.read().map_err(|e| match e {
-                tungstenite::Error::Io(e)
-                    if matches!(
-                        e.kind(),
-                        std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock
-                    ) =>
-                {
-                    TransportError::Timeout
+            let message = loop {
+                let left = deadline
+                    .checked_duration_since(Instant::now())
+                    .filter(|d| !d.is_zero())
+                    .ok_or(TransportError::Timeout)?;
+                self.socket
+                    .get_mut()
+                    .set_read_timeout(Some(left))
+                    .map_err(|_| TransportError::Closed)?;
+                match self.socket.read() {
+                    Ok(message) => break message,
+                    Err(tungstenite::Error::Io(e))
+                        if e.kind() == std::io::ErrorKind::Interrupted =>
+                    {
+                        continue;
+                    }
+                    Err(tungstenite::Error::Io(e))
+                        if matches!(
+                            e.kind(),
+                            std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock
+                        ) =>
+                    {
+                        return Err(TransportError::Timeout);
+                    }
+                    Err(tungstenite::Error::Capacity(_)) => return Err(TransportError::Oversized),
+                    Err(_) => return Err(TransportError::Closed),
                 }
-                tungstenite::Error::Capacity(_) => TransportError::Oversized,
-                _ => TransportError::Closed,
-            })?;
+            };
             match message {
                 Message::Text(raw) => {
                     if let Some(value) = response_result(&raw, self.next_id)? {

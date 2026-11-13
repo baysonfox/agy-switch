@@ -48,6 +48,7 @@ const Settings = compile('../src/pages/Settings.tsx', {
     '../components/settings/NetworkSettings': { default: 'NetworkSettings' },
     '../components/settings/DashboardSettings': { default: 'DashboardSettings' },
     '../components/settings/ModelDisplaySettings': { default: 'ModelDisplaySettings' },
+    '../components/settings/ModelPricingSettings': { default: 'ModelPricingSettings' },
     '../components/settings/ExperimentalSettings': { default: 'ExperimentalSettings' },
     '../components/autoSwitch/AutoSwitch': { AutoSwitchSettings: 'AutoSwitchSettings' },
     '../components/settings/SettingsNavigation': { ...nav, default: 'SettingsNavigation' },
@@ -88,7 +89,7 @@ test('all category panels remain rendered while only one is visible', () => {
 });
 test('data, startup and background controls remain present', () => {
     const tree = renderSettings();
-    for (const type of ['DesktopSettings', 'NetworkSettings', 'DashboardSettings', 'ModelDisplaySettings']) assert.equal(walk(tree, n => n.type === type).length, 1);
+    for (const type of ['DesktopSettings', 'NetworkSettings', 'DashboardSettings', 'ModelDisplaySettings', 'ModelPricingSettings']) assert.equal(walk(tree, n => n.type === type).length, 1);
     for (const id of ['refresh-interval', 'sync-interval']) assert.equal(walk(tree, n => n.props?.id === id).length, 1);
 });
 test('category scroll reset clears both scrollers without invoking config writes', () => {
