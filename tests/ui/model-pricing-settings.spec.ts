@@ -7,7 +7,7 @@ for (const language of ['zh', 'en']) {
             content: `(${setupSettingsFixture.toString()})(${JSON.stringify({ language })});`,
         });
         await page.goto('/settings');
-        await page.getByRole('tab', { name: language === 'zh' ? '模型与配额' : 'Models & Quota' }).click();
+        await page.getByRole('tab', { name: language === 'zh' ? '配额与模型' : 'Quota & Models', exact: true }).click();
 
         const section = page.locator('section[aria-labelledby="model-pricing-settings-title"]');
         await expect(section).toBeVisible();
@@ -32,15 +32,13 @@ for (const language of ['zh', 'en']) {
         await expect(table).toContainText('$0.15');
 
         // Verify persisted in config
-        const saved = await page.evaluate(() => (window as any).__settingsFixture.general().model_pricing);
-        expect(saved.manual_prices).toEqual([
+        await expect.poll(async () => page.evaluate(() => (window as any).__settingsFixture.general().model_pricing?.manual_prices)).toEqual([
             { model: 'custom-test-model', input: 1.25, output: 5.5, cached: 0.15 },
         ]);
 
         // Toggle auto sync off
         await section.getByRole('checkbox', { name: language === 'zh' ? '自动同步' : 'Auto-sync' }).uncheck();
-        const savedAfterToggle = await page.evaluate(() => (window as any).__settingsFixture.general().model_pricing);
-        expect(savedAfterToggle.auto_sync_models_dev).toBe(false);
+        await expect.poll(async () => page.evaluate(() => (window as any).__settingsFixture.general().model_pricing?.auto_sync_models_dev)).toBe(false);
 
         // Delete manual price
         await section.getByRole('button', { name: language === 'zh' ? '删除 custom-test-model 的手动价格' : 'Delete manual price for custom-test-model' }).click();
